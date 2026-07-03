@@ -1,0 +1,4 @@
+-passar as imagens do flight hub diretamente para o servidor
+-fazer odortomapa infrared com as imagens grayscale
+-passar automaticamente iamgens gray scale para o server e nao red scale (codigo python /monitoramentoPoloii/process_thermal_bach.py)
+
