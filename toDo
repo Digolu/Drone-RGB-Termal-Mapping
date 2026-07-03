@@ -1,4 +1,5 @@
--passar as imagens do flight hub diretamente para o servidor
--fazer odortomapa infrared com as imagens grayscale
+-passar as imagens do flight hub diretamente para o servidor (confirmar se é mesmo impossivel)
+-fazer odortomapa infrared com as imagens grayscale (esperamos ter o docker no servidor...)
 -passar automaticamente iamgens gray scale para o server e nao red scale (codigo python /monitoramentoPoloii/process_thermal_bach.py)
-
+-ver a calibração da infrared camera com a foto e as medições (40.6 -> Sombra 45.4 -> Sol)
+-ver do extensor de sinal cheio de pó
