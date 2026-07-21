@@ -1,6 +1,6 @@
 from pymavlink import mavutil
 
-the_connection = mavutil.mavlink_connection('/dev/ttyUSB0', baud=57600)
+the_connection = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
 
 the_connection.wait_heartbeat()
 print("Heartbeat from system (system %u component %u)" % 
