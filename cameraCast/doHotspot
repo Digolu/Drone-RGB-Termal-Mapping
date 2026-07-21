@@ -1,0 +1,7 @@
+sudo nmcli device wifi hotspot con-name drone-wifi ssid jet band bg password qwerty
+
+sudo nmcli connection delete [nome da rede]
+
+rodrigo@10.42.0.1's 
+
+http://10.42.0.1:8000/video
