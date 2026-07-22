@@ -34,14 +34,19 @@ def testar_motor(motor_seq, percentagem=15, duracao_seg=3):
     ack = drone.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
     if ack and ack.command == mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST:
         if ack.result == 0:
-            print(f"✓ Motor {motor_seq} a rodar!")
+            print(f"Motor {motor_seq} a rodar!")
         else:
-            print(f"❌ Rejeitado pelo drone (Código: {ack.result}). Verifica se o Safety Switch está premido.")
+            print(f"Rejeitado pelo drone (Código: {ack.result}). Verifica se o Safety Switch está premido.")
 
 # Executa o teste nos 4 motores em sequência
 try:
-    for m in range(1, 5):
-        testar_motor(motor_seq=m, percentagem=15, duracao_seg=2)
-        time.sleep(3)  # Pausa entre cada motor
+    testar_motor(motor_seq=1, percentagem=20, duracao_seg=2)
+
+    testar_motor(motor_seq=2, percentagem=20, duracao_seg=2)
+
+    testar_motor(motor_seq=3, percentagem=20, duracao_seg=2)
+
+    testar_motor(motor_seq=4, percentagem=20, duracao_seg=2)
+
 finally:
     print("\nTeste concluído.")
