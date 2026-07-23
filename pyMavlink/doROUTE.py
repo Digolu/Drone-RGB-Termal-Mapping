@@ -38,7 +38,6 @@ def reader_loop():
                 current_position["lon"] = msg.lon / 1e7
                 current_position["alt"] = msg.relative_alt / 1000.0  # mm -> m
 
-
 def wait_ack(command_id, timeout=5):
     """Consome da fila de ACKs (alimentada só pela reader_loop)."""
     start = time.time()
@@ -52,20 +51,23 @@ def wait_ack(command_id, timeout=5):
         # ACK de outro comando -> descarta e continua à espera
     return None
 
-
-def set_mode(mode_name):
+def set_mode(mode_name, timeout=5):
     mode_id = drone.mode_mapping()[mode_name]
     drone.mav.set_mode_send(
         drone.target_system,
         mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
         mode_id
     )
-    while True:
+
+    start = time.time()
+    while time.time() - start < timeout:
         with mode_lock:
             if current_mode["value"] == mode_name:
+                print(f"Modo alterado para {mode_name}\n")
                 break
         time.sleep(0.1)
-
+    
+    print(f"Fim funcao set_mode, modo atual: {current_mode['value']}\n")
 
 def arm():
     drone.mav.command_long_send(
@@ -74,9 +76,8 @@ def arm():
         0, 1, 0, 0, 0, 0, 0, 0
     )
     ack = wait_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM)
-    print("Arm ACK:", ack)
+    print(f"Arm ACK: {ack}\n")
     time.sleep(1)
-
 
 def disarm():
     drone.mav.command_long_send(
@@ -85,28 +86,25 @@ def disarm():
         0, 0, 0, 0, 0, 0, 0, 0
     )
     ack = wait_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM)
-    print("Disarm ACK:", ack)
-
+    print(f"Disarm ACK: {ack}\n")
 
 def takeoff():
-    print("A armar...")
+    print("A armar...\n")
     arm()
-    print("A mudar para GUIDED...")
+    print("A mudar para GUIDED...\n")
     set_mode('GUIDED')
-    print(f"A descolar para {TAKEOFF_ALT}m...")
+    print(f"A descolar para {TAKEOFF_ALT}m...\n")
     drone.mav.command_long_send(
         drone.target_system, drone.target_component,
         mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
         0, 0, 0, 0, 0, 0, 0, TAKEOFF_ALT
     )
     ack = wait_ack(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF)
-    print("Takeoff ACK:", ack)
-
+    print(f"Takeoff ACK: {ack}\n")
 
 def land():
-    print("A pousar...")
+    print("A pousar...\n")
     set_mode('LAND')
-
 
 def monitor_mode_changes():
     """Só LÊ o estado partilhado current_mode, nunca chama recv_match diretamente."""
@@ -115,13 +113,12 @@ def monitor_mode_changes():
         with mode_lock:
             mode_now = current_mode["value"]
         if mode_now != last_mode:
-            print(f"Modo mudou: {last_mode} -> {mode_now}")
-            if mode_now == 'AUTO' and last_mode != 'AUTO':
-                print(">>> Modo AUTO detetado, a correr o código Python...")
-                threading.Thread(target=takeoff).start()
+            print(f"Modo mudou: {last_mode} -> {mode_now}\n")
+            if mode_now == 'GUIDED' and last_mode != 'GUIDED':
+                print(">>> Modo GUIDED detetado, a correr o código Python...\n")
+                threading.Thread(target=viagem).start()
             last_mode = mode_now
         time.sleep(0.2)
-
 
 def get_key():
     fd = sys.stdin.fileno()
@@ -133,7 +130,6 @@ def get_key():
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return key
 
-
 def horizontal_distance(lat1, lon1, lat2, lon2):
     R = 6371000  # raio da Terra em metros
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -142,8 +138,7 @@ def horizontal_distance(lat1, lon1, lat2, lon2):
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return 2 * R * math.asin(math.sqrt(a))
 
-
-def wait_reached(lat, lon, alt, radius=2.0, alt_tol=1.0, timeout=60, hold_time=2.0):
+def wait_reached(lat, lon, alt, radius=3.0, alt_tol=1.0, timeout=180, hold_time=2.0):
     """
     Espera até o drone estar a menos de 'radius' metros (horizontal)
     e 'alt_tol' metros (vertical) do alvo, de forma estável durante 'hold_time' segundos.
@@ -165,7 +160,7 @@ def wait_reached(lat, lon, alt, radius=2.0, alt_tol=1.0, timeout=60, hold_time=2
                 if stable_since is None:
                     stable_since = time.time()
                 elif time.time() - stable_since >= hold_time:
-                    print(f"Chegou ao waypoint (dist={dist:.1f}m, dalt={dalt:.1f}m)")
+                    print(f"Chegou ao waypoint (dist={dist:.1f}m, dalt={dalt:.1f}m)\n")
                     return True
             else:
                 stable_since = None
@@ -174,7 +169,6 @@ def wait_reached(lat, lon, alt, radius=2.0, alt_tol=1.0, timeout=60, hold_time=2
 
     print("Timeout: não chegou ao waypoint a tempo.")
     return False
-
 
 def route(lat, lon, alt):
     print("A mudar para GUIDED...")
@@ -200,21 +194,24 @@ def route(lat, lon, alt):
 
     wait_reached(lat, lon, alt)
 
-
 def viagem():
     waypoints = [
-        (-35.362532, 149.163264, 30),  # Ponto 1
-        (-35.361718, 149.161394, 30),  # Ponto 2
-        (-35.363000, 149.167521, 30)   # Ponto 3
+        (40.1846419237845, -8.415664619217932, 20),  # Ponto 1
+        (40.18500124241277, -8.415945849056381, 20),  # Ponto 2
+        (40.184993184219906, -8.415567579982023, 20)   # Ponto 3
     ]
 
     def executar():
         for lat, lon, alt in waypoints:
-            print(f"Indo para: lat={lat}, lon={lon}, alt={alt}m")
+            print(f"Indo para: lat={lat}, lon={lon}, alt={alt}m\n")
             route(lat, lon, alt)  # chamada direta -> só avança quando wait_reached terminar
         print("Rota completa!")
 
     threading.Thread(target=executar).start()
+
+def RTL():
+    print("A mudar para RTL...\n")
+    set_mode('RTL')
 
 
 def keyboard_loop():
@@ -222,6 +219,7 @@ def keyboard_loop():
     print("  [t] Take off")
     print("  [l] Land")
     print("  [r] Route")
+    print("  [h] RTL")
     print("  [q] Sair\n")
 
     while True:
@@ -236,7 +234,10 @@ def keyboard_loop():
         elif key == 'r':
             print("A executar rota...")
             viagem()
-
+        elif key == 'h':
+            print("RTL")
+            threading.Thread(target=RTL).start()
+            
 
 if __name__ == '__main__':
     threading.Thread(target=reader_loop, daemon=True).start()
