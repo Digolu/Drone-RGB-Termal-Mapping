@@ -13,21 +13,6 @@ waypoints = [
     (40.184714, -8.413766, 30),   # Ponto 4
     (40.184618, -8.413564, 30)    # Ponto 5
 ]
-routeType = ''from pymavlink import mavutil
-import math
-import sys, tty, termios, threading, time, queue
-
-CONNECTION = 'tcp:127.0.0.1:5760'
-#CONNECTION = '/dev/ttyACM1'
-BAUD = 115200
-TAKEOFF_ALT = 50
-waypoints = [
-    (40.184603, -8.414432, 30),  # Ponto 1
-    (40.184709, -8.414261, 30),  # Ponto 2
-    (40.184620, -8.414051, 30),   # Ponto 3
-    (40.184714, -8.413766, 30),   # Ponto 4
-    (40.184618, -8.413564, 30)    # Ponto 5
-]
 routeType = ''
 key1 = None
 
