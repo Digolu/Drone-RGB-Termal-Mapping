@@ -44,6 +44,12 @@ FRAME_HEIGHT = 480
 CAMERA_INDEX = 0  # muda conforme o /dev/videoX da tua câmara
 ultimo_beep=0
 
+# Configuração de deteção mais robusta em pouca luz
+LOW_LIGHT_CLAHE_CLIP = 2.0
+LOW_LIGHT_BRIGHTNESS_ALPHA = 1.08
+LOW_LIGHT_BRIGHTNESS_BETA = 12
+DEFAULT_MIN_AREA = 250
+
 # Janela deslizante para média de FPS (mais estável que frame-a-frame)
 FPS_SMOOTHING_WINDOW = 30
 
@@ -56,7 +62,7 @@ class ColorTarget:
     name: str
     hsv_lower: tuple
     hsv_upper: tuple
-    min_area: int = 400
+    min_area: int = DEFAULT_MIN_AREA
     bgr_draw: tuple = (0, 255, 0)  # cor do retângulo/texto no debug
 
 
@@ -69,10 +75,10 @@ class Detection:
 
 
 TARGETS = [
-    ColorTarget("vermelho", (0, 120, 70), (10, 255, 255), 400, (0, 0, 255)),
-    ColorTarget("verde", (40, 70, 70), (80, 255, 255), 400, (0, 255, 0)),
-    ColorTarget("azul", (100, 150, 0), (140, 255, 255), 400, (255, 0, 0)),
-    ColorTarget("amarelo", (20, 100, 100), (35, 255, 255), 400, (0, 255, 255)),
+    ColorTarget("vermelho", (0, 60, 45), (10, 255, 255), DEFAULT_MIN_AREA, (0, 0, 255)),
+    ColorTarget("verde", (35, 50, 40), (90, 255, 255), DEFAULT_MIN_AREA, (0, 255, 0)),
+    ColorTarget("azul", (95, 70, 30), (140, 255, 255), DEFAULT_MIN_AREA, (255, 0, 0)),
+    ColorTarget("amarelo", (15, 70, 60), (40, 255, 255), DEFAULT_MIN_AREA, (0, 255, 255)),
 ]
 
 
@@ -81,19 +87,44 @@ class ColorDetector:
         self.targets = targets
         self.frame_width = frame_width
         self.frame_height = frame_height
+        self.clahe = cv2.createCLAHE(clipLimit=LOW_LIGHT_CLAHE_CLIP, tileGridSize=(8, 8))
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+    def _preprocess_frame(self, frame_bgr):
+        blurred = cv2.medianBlur(frame_bgr, 5)
+
+        lab = cv2.cvtColor(blurred, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l_eq = self.clahe.apply(l)
+        lab_eq = cv2.merge((l_eq, a, b))
+
+        enhanced = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+        enhanced = cv2.convertScaleAbs(
+            enhanced,
+            alpha=LOW_LIGHT_BRIGHTNESS_ALPHA,
+            beta=LOW_LIGHT_BRIGHTNESS_BETA,
+        )
+        return enhanced
 
     def detect(self, frame_bgr):
-        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+        frame_for_detection = self._preprocess_frame(frame_bgr)
+        hsv = cv2.cvtColor(frame_for_detection, cv2.COLOR_BGR2HSV)
         detections = []
 
         for target in self.targets:
             lower = np.array(target.hsv_lower, dtype=np.uint8)
             upper = np.array(target.hsv_upper, dtype=np.uint8)
-            mask = cv2.inRange(hsv, lower, upper)
+
+            if target.name == "vermelho":
+                mask1 = cv2.inRange(hsv, np.array([0, 60, 45], dtype=np.uint8), np.array([10, 255, 255], dtype=np.uint8))
+                mask2 = cv2.inRange(hsv, np.array([170, 60, 45], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8))
+                mask = cv2.bitwise_or(mask1, mask2)
+            else:
+                mask = cv2.inRange(hsv, lower, upper)
 
             # limpeza básica de ruído
-            mask = cv2.erode(mask, None, iterations=2)
-            mask = cv2.dilate(mask, None, iterations=2)
+            mask = cv2.erode(mask, self.kernel, iterations=1)
+            mask = cv2.dilate(mask, self.kernel, iterations=2)
 
             contours, _ = cv2.findContours(
                 mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
