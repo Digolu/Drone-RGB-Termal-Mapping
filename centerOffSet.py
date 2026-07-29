@@ -76,9 +76,6 @@ class Detection:
 
 TARGETS = [
     ColorTarget("vermelho", (0, 60, 45), (10, 255, 255), DEFAULT_MIN_AREA, (0, 0, 255)),
-    ColorTarget("verde", (35, 50, 40), (90, 255, 255), DEFAULT_MIN_AREA, (0, 255, 0)),
-    ColorTarget("azul", (95, 70, 30), (140, 255, 255), DEFAULT_MIN_AREA, (255, 0, 0)),
-    ColorTarget("amarelo", (15, 70, 60), (40, 255, 255), DEFAULT_MIN_AREA, (0, 255, 255)),
 ]
 
 
@@ -111,35 +108,32 @@ class ColorDetector:
         hsv = cv2.cvtColor(frame_for_detection, cv2.COLOR_BGR2HSV)
         detections = []
 
-        for target in self.targets:
-            lower = np.array(target.hsv_lower, dtype=np.uint8)
-            upper = np.array(target.hsv_upper, dtype=np.uint8)
+        target = self.targets[0]
+        lower = np.array(target.hsv_lower, dtype=np.uint8)
+        upper = np.array(target.hsv_upper, dtype=np.uint8)
 
-            if target.name == "vermelho":
-                mask1 = cv2.inRange(hsv, np.array([0, 60, 45], dtype=np.uint8), np.array([10, 255, 255], dtype=np.uint8))
-                mask2 = cv2.inRange(hsv, np.array([170, 60, 45], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8))
-                mask = cv2.bitwise_or(mask1, mask2)
-            else:
-                mask = cv2.inRange(hsv, lower, upper)
+        mask1 = cv2.inRange(hsv, np.array([0, 60, 45], dtype=np.uint8), np.array([10, 255, 255], dtype=np.uint8))
+        mask2 = cv2.inRange(hsv, np.array([170, 60, 45], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8))
+        mask = cv2.bitwise_or(mask1, mask2)
 
-            # limpeza básica de ruído
-            mask = cv2.erode(mask, self.kernel, iterations=1)
-            mask = cv2.dilate(mask, self.kernel, iterations=2)
+        # limpeza básica de ruído
+        mask = cv2.erode(mask, self.kernel, iterations=1)
+        mask = cv2.dilate(mask, self.kernel, iterations=2)
 
-            contours, _ = cv2.findContours(
-                mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            if not contours:
-                continue
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        if not contours:
+            return detections
 
-            maior = max(contours, key=cv2.contourArea)
-            area = cv2.contourArea(maior)
-            if area < target.min_area:
-                continue
+        maior = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(maior)
+        if area < target.min_area:
+            return detections
 
-            x, y, w, h = cv2.boundingRect(maior)
-            cx, cy = x + w // 2, y + h // 2
-            detections.append(Detection(target.name, area, (x, y, w, h), (cx, cy)))
+        x, y, w, h = cv2.boundingRect(maior)
+        cx, cy = x + w // 2, y + h // 2
+        detections.append(Detection(target.name, area, (x, y, w, h), (cx, cy)))
 
         return detections
 
