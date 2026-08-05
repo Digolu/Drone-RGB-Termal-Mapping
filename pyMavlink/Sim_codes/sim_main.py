@@ -3,6 +3,7 @@ import math
 import sys, tty, termios, threading, time, queue
 import sim_globalFunc as j
 #import Jet_cameraHeliDetect as hd
+import sim_gazeboCam as gc
 
 j.keyboard_loop()
 
@@ -10,7 +11,8 @@ if __name__ == '__main__':
 
     threading.Thread(target=j.reader_loop, daemon=True).start()
     threading.Thread(target=j.monitor_mode_changes, daemon=True).start()
-    #threading.Thread(target=hd.capturar_e_processar, daemon=True).start()
+
+    threading.Thread(target=gc.capturar_e_processar, daemon=True).start()
 
     while True:
         c=10

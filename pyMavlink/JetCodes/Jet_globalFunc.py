@@ -1,12 +1,13 @@
 from pymavlink import mavutil
 import math
 import sys, tty, termios, threading, time, queue
-import Jet_linear as jl
-import Jet_spline as js
+import Jet_linear  as jl
+import Jet_spline  as js
 import Jet_helipad as jh
+import Jet_follow  as jf
 
 #CONNECTION = 'udp:127.0.0.1:14550'
-CONNECTION = '/dev/ttyACM1'
+CONNECTION = '/dev/ttyACM0'
 BAUD = 115200
 TAKEOFF_ALT = 50
 waypoints = [
@@ -24,21 +25,51 @@ print("À espera de heartbeat...")
 drone.wait_heartbeat()
 print(f"Ligado ao sistema {drone.target_system}, componente {drone.target_component}")
 
+# Ligação UDP de saída: "espelha" toda a telemetria para a rede WiFi.
+# Qualquer GCS na mesma rede pode ligar-se a esta porta
+
+TELEMETRY_UDP_PORT = 14555
+telem_out = None
+try:
+    telem_out = mavutil.mavlink_connection(f'udpbcast:255.255.255.255:{TELEMETRY_UDP_PORT}',input=False)
+    print(f"[telemetria] a difundir em udp broadcast :{TELEMETRY_UDP_PORT}")
+except Exception as e:
+    print(f"[telemetria] não foi possível abrir socket UDP: {e}")
+
+
 ack_queue = queue.Queue()
 mode_lock = threading.Lock()
 current_mode = {"value": None}
 
 position_lock = threading.Lock()
-current_position = {"lat": None, "lon": None, "alt": None}
+current_position = {"lat": None, "lon": None, "alt": None, "hdg": None}
 
+drone.mav.request_data_stream_send(
+    drone.target_system,
+    drone.target_component,
+    mavutil.mavlink.MAV_DATA_STREAM_POSITION,
+    30,
+    1
+)
 
 def reader_loop():
     """ÚNICA thread que lê da ligação MAVLink."""
     while True:
         msg = drone.recv_match(blocking=True, timeout=1)
+        #print(f"Mensagem: {msg}")
         if msg is None:
             continue
+
+        if telem_out is not None:
+            try:
+                telem_out.mav.send(msg)
+                #print("[telemetria] enviada")
+            except Exception as e:
+                print(f"[telemetria] erro ao enviar: {e}")
+
+
         mtype = msg.get_type()
+        #print (f"mytpe no reader loop: {mtype}")
         if mtype == 'HEARTBEAT':
             with mode_lock:
                 current_mode["value"] = drone.flightmode
@@ -49,6 +80,8 @@ def reader_loop():
                 current_position["lat"] = msg.lat / 1e7
                 current_position["lon"] = msg.lon / 1e7
                 current_position["alt"] = msg.relative_alt / 1000.0  # mm -> m
+                current_position["hdg"] = msg.hdg
+
 
 def wait_ack(command_id, timeout=5):
     """Consome da fila de ACKs (alimentada só pela reader_loop)."""
@@ -95,22 +128,23 @@ def monitor_mode_changes():
             mode_now = current_mode["value"]
         if mode_now != last_mode:
             print(f"Modo mudou: {last_mode} -> {mode_now}")
-            if mode_now == 'GUIDED' and last_mode != 'GUIDED' and routeType == 'linear':
+            changemode= mode_now == 'GUIDED' and last_mode != 'GUIDED'    
+            if changemode == True and routeType == 'linear':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar rota linear")
-                threading.Thread(target=jl.viagem()).start()
-            elif routeType == 'spline':
+                threading.Thread(target=jl.viagem).start()
+            elif changemode == True and routeType == 'spline':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar rota polinomial")
                 threading.Thread(target=js.spline_route_local, args=(waypoints,)).start()       
-            elif routeType == 'follow':
+            elif changemode == True and routeType == 'follow':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar follow mode")
-                #threading.Thread(target=js.spline_route_local, args=(waypoints,)).start()
-            elif routeType == 'helipad':
+                threading.Thread(target=js.followDrone).start()
+            elif changemode == True and routeType == 'helipad':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar landing on helipad")
-                threading.Thread(target=jh.guidedLanding, args=(waypoints,)).start()                      
+                threading.Thread(target=jh.guidedLanding).start()                      
         last_mode = current_mode["value"]
 
         time.sleep(0.2)
@@ -131,25 +165,32 @@ def horizontal_distance(lat1, lon1, lat2, lon2):
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    print (f"Valor de 'a' {a}")
     return 2 * R * math.asin(math.sqrt(a))
 
-def wait_reached(lat, lon, alt, radius=3.0, alt_tol=1.0, timeout=180, hold_time=2.0):
+def wait_reached(lat, lon, alt, radius=5.0, alt_tol=3.0, timeout=180, hold_time=2.0):
     """
     Espera até o drone estar a menos de 'radius' metros (horizontal)
     e 'alt_tol' metros (vertical) do alvo, de forma estável durante 'hold_time' segundos.
     """
     start = time.time()
     stable_since = None
+    #print("Eu, wait_reached, fui chamado")
 
-    while time.time() - start < timeout:
+    while (time.time() - start) < timeout:
+        #print("A executar wait_reached loop")
         with position_lock:
             lat_now = current_position["lat"]
             lon_now = current_position["lon"]
             alt_now = current_position["alt"]
+            print(f"lat_now: {lat_now}, lon_now: {lon_now}, alt_now: {alt_now}")
 
-        if lat_now is not None:
+        if lat_now != None:
             dist = horizontal_distance(lat_now, lon_now, lat, lon)
             dalt = abs(alt_now - alt)
+
+            print (f"Valor de dist: {dist}")
+            print (f"Valor de dalt: {dalt}")
 
             if dist <= radius and dalt <= alt_tol:
                 if stable_since is None:
@@ -172,7 +213,6 @@ def RTL():
 def keyboard_loop():
     global routeType
 
-
     print("\nControlo de variaveis ativo:")
     print("  [s] Route Spline")
     print("  [l] Linear Route")
@@ -186,15 +226,19 @@ def keyboard_loop():
             global routeType
             routeType = 'spline'  ## vida real
             print("Rota polinomial selecionada. Tipo de rota:", routeType)
+            break
         elif key == 'l':
             routeType = 'linear'
             print("Rota linear selecionada. Tipo de rota:", routeType)
+            break
         elif key == 'f':
             routeType = 'follow'
             print("Modo Follow selecionado. Tipo de rota:", routeType)
+            break
         elif key == 'h':
             routeType = 'helipad'
             print("Modo Helipad selecionado. Tipo de rota:", routeType)    
+            break
         elif key == 'q':
             print("A sair...")
             break       

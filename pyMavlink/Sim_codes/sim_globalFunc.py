@@ -1,9 +1,10 @@
 from pymavlink import mavutil
 import math
 import sys, tty, termios, threading, time, queue
-import sim_linear as jl
-import sim_spline as js
+import sim_linear  as jl
+import sim_spline  as js
 import sim_helipad as jh
+import sim_follow  as jf
 
 CONNECTION = 'udp:127.0.0.1:14550'
 #CONNECTION = '/dev/ttyACM0'
@@ -136,7 +137,7 @@ def monitor_mode_changes():
             elif changemode == True and routeType == 'follow':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar follow mode")
-                #threading.Thread(target=js.spline_route_local, args=(waypoints,)).start()
+                threading.Thread(target=jf.followDrone).start()
             elif changemode == True and routeType == 'helipad':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar landing on helipad")

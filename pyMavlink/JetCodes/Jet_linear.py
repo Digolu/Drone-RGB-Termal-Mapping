@@ -27,7 +27,9 @@ def route(lat, lon, alt):
         0, 0        # yaw, yaw_rate (ignorados)
     )
 
+    #print("Chamei wait_reached")
     gf.wait_reached(lat, lon, alt)
+    
 
 def viagem():
 

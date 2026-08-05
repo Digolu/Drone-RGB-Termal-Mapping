@@ -1,56 +1,37 @@
 from pymavlink import mavutil
 import math
 import sys, tty, termios, threading, time, queue
-import sim_globalFunc as gf
-import sim_camera as hd
+import Jet_globalFunc as gf
+import Jet_cameraHeliDetect as hd
 import requests
 
 CAMERA_HOST = "http://192.168.0.142:5000"  # or the Jetson's IP if scripts run on different hosts
-LOCAL_HOST = "http://127.0.0.1:5000"
+HOTSPOT_HOST = "http://0.0.0.0:5000"
+LOCAL_HOST =  "http://127.0.0.1"
+
+lasttime = 0
+lasttime1 = 0
 yaw=0
-lasttime,lasttime1=0,0
+#vx = 2, vy = 2, vz = 0.2
 
 def get_desvio_from_simulation():
     try:
-        ##print("Estou no get_desvio_from_simulation()")
-        r = requests.get(f"{LOCAL_HOST}/desvio_vermelho", timeout=1)
+        r = requests.get(f"{HOTSPOT_HOST}/desvio_vermelho", timeout=1)
         r.raise_for_status()
         return r.json()  # dict or None
     except requests.RequestException as e:
         print(f"[Aviso] não consegui contactar o servidor de câmara: {e}")
         return None
 
-def guidedLanding(waypoints):
+def followDrone():
 
-    print("A iniciar aterragem no helipad...")
+    print("A iniciar follow drone")
     updateDronePosition()
-    # type_mask: usar apenas posição (ignora vel, accel, yaw, yaw_rate)
-
-
-def orientaNS():
-    global yaw
-    print(f"current angle {yaw}")
-
-    if yaw > 0 and yaw < 180.0:
-        direction = -1
-    else:
-        direction = 1
-
-    gf.drone.mav.command_long_send(
-        gf.drone.target_system,
-        gf.drone.target_component,
-        mavutil.mavlink.MAV_CMD_CONDITION_YAW,
-        0, 
-        0,  
-        20,  # Yaw speed (ignored)
-        direction,  # Direction: 1 for clockwise, -1 for counter-clockwise
-        0, 0, 0, 0  
-    )
 
 def updateDronePosition():
     global lasttime,lasttime1,yaw
     moveD,moveE,moveN=0,0,0
-    type_mask = 0b101111111000  
+    type_mask = 0b100111000000
     
     yaw = (gf.current_position["hdg"])/100
     alt = gf.current_position['alt']
@@ -68,8 +49,8 @@ def updateDronePosition():
         else:    
             current_time1=time.time()
             if (current_time1-lasttime1) > 0.033:     
-                #desvios = desvio do drone do centro da camera   ##drone
-                desvios = get_desvio_from_simulation()     # simulacao com pagina local host http "sim_camera.py"
+                desvios = hd.get_desvio_vermelho()   ##drone
+                #desvios = get_desvio_from_simulation()     # simulacao com pagina local host http "sim_camera.py"
 
                 if desvios != None:                     
                     current_time=time.time()
@@ -77,26 +58,26 @@ def updateDronePosition():
                         print(f"Desvio norte: {desvios['esquerda']}px, Desvio sul {desvios['direita']}px ")
                         print(f"Desvio este: {desvios['cima']}px, Desvio oeste {desvios['baixo']}px ")
                         print (f"Move norte {moveN}, move este {moveE}, move down {moveD}")
-                        print (f"Yaw: {yaw}, Alt: {alt}\n")
+                        print (f"Yaw: {yaw}\n")
                         lasttime=current_time
 
                     CorrectionMeters = 0.1
 
-                    if (desvios['esquerda']*pxToMeters()) >0: #(CorrectionMeters*alt):
+                    if (desvios['esquerda']*pxToMeters()) > (CorrectionMeters*alt):
                         moveN = .5
-                    elif (desvios['direita'] *pxToMeters()) >0: #(CorrectionMeters*alt):
+                    elif (desvios['direita'] *pxToMeters()) > (CorrectionMeters*alt):
                         moveN = -.5
                     else:
                         moveN = 0
                         
-                    if (desvios['cima']*pxToMeters()) >0: #(CorrectionMeters*alt):
+                    if (desvios['cima']*pxToMeters()) > (CorrectionMeters*alt):
                         moveE = .5
-                    elif (desvios['baixo'] *pxToMeters()) >0:# (CorrectionMeters*alt):
+                    elif (desvios['baixo'] *pxToMeters()) > (CorrectionMeters*alt):
                         moveE = -.5 
                     else:
                         moveE = 0    
 
-                    moveD = 0  ## apenas provisorio. so alinha, nao desce
+                    moveD = 1  ## apenas provisorio. so alinha, nao desce
                     
                     if (moveN != 0) or (moveE != 0):
                         #print (f"Fiz move N={moveN},Fiz move E={moveE},Fiz moveD={moveD}")
@@ -109,13 +90,11 @@ def updateDronePosition():
                             moveN,  # north
                             moveE,  # east
                             moveD,  # down (moveD > 0 significa descer)      
-                            0, 0, 0,    # vx, vy, vz (ignorados pelo type_mask)
-                            0, 0, 0,    # afx, afy, afz (ignorados)
-                            0, 0        # yaw, yaw_rate 
+                            vx, vy, vz,    # vx, vy, vz 
+                            0, 0, 0,    # afx, afy, afz (ignorados pelo type_mask)
+                            0, 0        # yaw (0 = norte), yaw_rate (yaw_rate ignorado pelo type_mask)
                         )
                 lasttime1=current_time1    
-
-
 
 def pxToMeters():
 
@@ -123,12 +102,9 @@ def pxToMeters():
     Vfov=24.4
     Hfov=31.1
 
-    Vx = (alt * math.tan(math.radians(Vfov)))/204              #<- tamanho da cam do simuldor#/hd.FRAME_HEIGHT
-    Hx = (alt * math.tan(math.radians(Hfov)))/153                    #####hd.FRAME_WIDTH
+    Vx = (alt * math.tan(math.radians(Vfov)))/hd.FRAME_HEIGHT
+    Hx = (alt * math.tan(math.radians(Hfov)))/hd.FRAME_WIDTH
 
     #print(f"Altitude = {alt}, Vx={Vx}m, Hx={Hx}m")
 
     return Vx
-
-
-    
