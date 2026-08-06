@@ -79,6 +79,10 @@ def reader_loop():
                 current_position["hdg"] = msg.hdg
                 #print(f"Alt no linear: {current_position['alt']}")
 
+        elif mtype == 'ATTITUDE':
+            current_position['roll'] = math.degrees(msg.roll)    # graus
+            current_position['pitch'] = math.degrees(msg.pitch)  # graus        
+
 
 def wait_ack(command_id, timeout=5):
     """Consome da fila de ACKs (alimentada só pela reader_loop)."""
@@ -141,7 +145,7 @@ def monitor_mode_changes():
             elif changemode == True and routeType == 'helipad':
                 print(">>> Modo GUIDED detetado, a correr o código Python")
                 print("A executar landing on helipad")
-                threading.Thread(target=jh.guidedLanding, args=(waypoints,)).start()                      
+                threading.Thread(target=jh.guidedLanding).start()                      
         last_mode = current_mode["value"]
 
         time.sleep(0.2)

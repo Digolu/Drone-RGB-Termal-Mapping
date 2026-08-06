@@ -71,19 +71,27 @@ FPS_SMOOTHING_WINDOW = 30
 PORT = 5000
 
 
+# def construir_pipeline_rtp(port=RTP_PORT, encoding=RTP_ENCODING, payload=RTP_PAYLOAD):
+#     """
+#     Constrói a pipeline GStreamer para receber o video RTP/H264 enviado
+#     pelo Gazebo. Testada e confirmada com gst-launch-1.0 antes de ser
+#     usada aqui via cv2.VideoCapture(..., cv2.CAP_GSTREAMER).
+#     """
+#     return (
+#         f'udpsrc port={port} caps="application/x-rtp,media=video,'
+#         f'encoding-name={encoding},payload={payload}" ! '
+#         f"rtp{encoding.lower()}depay ! {encoding.lower()}parse ! "
+#         f"avdec_{encoding.lower()} ! videoconvert ! appsink drop=1"
+#     )
+
 def construir_pipeline_rtp(port=RTP_PORT, encoding=RTP_ENCODING, payload=RTP_PAYLOAD):
-    """
-    Constrói a pipeline GStreamer para receber o video RTP/H264 enviado
-    pelo Gazebo. Testada e confirmada com gst-launch-1.0 antes de ser
-    usada aqui via cv2.VideoCapture(..., cv2.CAP_GSTREAMER).
-    """
     return (
-        f'udpsrc port={port} caps="application/x-rtp,media=video,'
+        f'udpsrc port={port} buffer-size=2097152 caps="application/x-rtp,media=video,'
         f'encoding-name={encoding},payload={payload}" ! '
         f"rtp{encoding.lower()}depay ! {encoding.lower()}parse ! "
-        f"avdec_{encoding.lower()} ! videoconvert ! appsink drop=1"
+        f"avdec_{encoding.lower()} discard-corrupted-frames=true ! "
+        f"videoconvert ! appsink drop=true max-buffers=1 sync=false"
     )
-
 
 @dataclass
 class ColorTarget:
@@ -325,13 +333,13 @@ def capturar_e_processar():
                         _set_desvio_vermelho(desvios)
                         vermelho_detetado_neste_frame = True
 
-                        print(
-                            f"[Vermelho] Desvio -> "
-                            f"Direita: {desvios['direita']}px | "
-                            f"Esquerda: {desvios['esquerda']}px | "
-                            f"Baixo: {desvios['baixo']}px | "
-                            f"Cima: {desvios['cima']}px"
-                        )
+                        # print(
+                        #     f"[Vermelho] Desvio -> "
+                        #     f"Direita: {desvios['direita']}px | "
+                        #     f"Esquerda: {desvios['esquerda']}px | "
+                        #     f"Baixo: {desvios['baixo']}px | "
+                        #     f"Cima: {desvios['cima']}px"
+                        # )
 
                         # desenha centro da imagem + linha até ao objeto (debug visual)
                         cv2.circle(debug_frame, (center_x, center_y), 5, (255, 255, 255), -1)

@@ -2,16 +2,17 @@ from pymavlink import mavutil
 import math
 import sys, tty, termios, threading, time, queue
 
-CONNECTION = 'tcp:127.0.0.1:5760'
+CONNECTION = 'udp:127.0.0.1:14550'
 #CONNECTION = '/dev/ttyACM1'
 BAUD = 115200
-TAKEOFF_ALT = 50
+TAKEOFF_ALT = 20
 waypoints = [
     (40.184603, -8.414432, 30),  # Ponto 1
     (40.184709, -8.414261, 30),  # Ponto 2
     (40.184620, -8.414051, 30),   # Ponto 3
     (40.184714, -8.413766, 30),   # Ponto 4
-    (40.184618, -8.413564, 30)    # Ponto 5
+    (40.184618, -8.413564, 30),    # Ponto 5
+    (40.184808, -8.414235, 30)   # ponto 6
 ]
 routeType = ''
 key1 = None
@@ -276,373 +277,37 @@ def spline_route_local(waypoints):
         wait_close_enough(lat, lon, alt, radius=6.0, alt_tol=1.5, timeout=15)
     print("Rota spline (local) completa!")
 
-
-def viagem():
-
-    def executar():
-        for lat, lon, alt in waypoints:
-            print(f"Indo para: lat={lat}, lon={lon}, alt={alt}m")
-            route(lat, lon, alt)  # chamada direta -> só avança quando wait_reached terminar
-        print("Rota completa!")
-
-    threading.Thread(target=executar).start()
-
-def RTL():
-    print("A mudar para RTL...")
-    set_mode('RTL')
-
-
-def keyboard_loop():
-
-    print("\nModo de operacao:")
-    print("  [R] Real")
-    print("  [S] Simulation")
-    
-    global key1
-    while key1==None:
-        key1 = get_key()
-    
-    if key1 == 'S':
-
-        print("\nControlo por teclado ativo:")
-        print("  [t] Take off")
-        print("  [l] Land")
-        print("  [r] Route")
-        print("  [h] RTL")
-        print("  [q] Sair")
-
-        while True:
-            key = get_key()
-            if key == 't':
-                threading.Thread(target=takeoff).start()
-            elif key == 'l':
-                threading.Thread(target=land).start()
-            elif key == 'q':
-                print("A sair...")
-                break
-            elif key == 'r':
-                print("\nControlo por teclado ativo:")
-                print("  [l] Linear Route")
-                print("  [s] Spline Route")
-                        
-                key = get_key()
-                if key == 'l':
-                    print("A executar rota linear...")
-                    viagem()  ## simulacao
-                    print("A executar rota polinomial...")
-                elif key == 's':
-                    threading.Thread(target=spline_route_local, args=(waypoints,)).start()  ## simulacao
-            elif key == 'h':
-                print("RTL")
-                threading.Thread(target=RTL).start()
-
-    elif key1=='R':
-        print("\nControlo de variaveis ativo:")
-        print("  [s] Route Spline")
-        print("  [l] Linear Route")
-        print("  [f] Follow Mode")
-        print("  [c] Troca de modo (ATUAL MODE -> ALT_HOLD(2s)-> GUIDED)")
-        print("  [q] Sair")
-
-        while True:
-            key2 = get_key()
-            if key2 == 's':
-                global routeType
-                routeType = 'spline'  ## vida real
-                print("Rota polinomial selecionada. Tipo de rota:", routeType)
-            elif key2 == 'l':
-                routeType = 'linear'
-                print("Rota linear selecionada. Tipo de rota:", routeType)
-            elif key2 == 'f':
-                routeType = 'follow'
-                print("Modo Follow selecionado. Tipo de rota:", routeType)
-            elif key2 == 'c':
-                print("Troca de 2 segundos para outro modo...")
-                mode_id = drone.mode_mapping()['ALT_HOLD']
-                drone.mav.set_mode_send(
-                    drone.target_system,
-                    mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-                    mode_id
-                )
-                time.sleep(2)  # Wait for the mode change to take effect
-                
-                mode_id = drone.mode_mapping()['GUIDED']
-                drone.mav.set_mode_send(
-                    drone.target_system,
-                    mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-                    mode_id
-                )    
-            elif key2 == 'q':
-                print("A sair...")
-                break       
-                
-
-if __name__ == '__main__':
-    threading.Thread(target=reader_loop, daemon=True).start()
-    threading.Thread(target=monitor_mode_changes, daemon=True).start()
-    keyboard_loop()
-key1 = None
-
-drone = mavutil.mavlink_connection(CONNECTION, baud=BAUD)
-print("À espera de heartbeat...")
-drone.wait_heartbeat()
-print(f"Ligado ao sistema {drone.target_system}, componente {drone.target_component}")
-
-ack_queue = queue.Queue()
-mode_lock = threading.Lock()
-current_mode = {"value": None}
-
-position_lock = threading.Lock()
-current_position = {"lat": None, "lon": None, "alt": None}
-
-
-def reader_loop():
-    """ÚNICA thread que lê da ligação MAVLink."""
-    while True:
-        msg = drone.recv_match(blocking=True, timeout=1)
-        if msg is None:
-            continue
-        mtype = msg.get_type()
-        if mtype == 'HEARTBEAT':
-            with mode_lock:
-                current_mode["value"] = drone.flightmode
-        elif mtype == 'COMMAND_ACK':
-            ack_queue.put(msg)
-        elif mtype == 'GLOBAL_POSITION_INT':
-            with position_lock:
-                current_position["lat"] = msg.lat / 1e7
-                current_position["lon"] = msg.lon / 1e7
-                current_position["alt"] = msg.relative_alt / 1000.0  # mm -> m
-
-def wait_ack(command_id, timeout=5):
-    """Consome da fila de ACKs (alimentada só pela reader_loop)."""
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            msg = ack_queue.get(timeout=timeout - (time.time() - start))
-        except queue.Empty:
-            return None
-        if msg.command == command_id:
-            return msg
-        # ACK de outro comando -> descarta e continua à espera
-    return None
-
-def set_mode(mode_name, timeout=5):
-    mode_id = drone.mode_mapping()[mode_name]
-    drone.mav.set_mode_send(
-        drone.target_system,
-        mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-        mode_id
-    )
-
-    start = time.time()
-    while time.time() - start < timeout:
-        with mode_lock:
-            if current_mode["value"] == mode_name:
-                print(f"Modo alterado para {mode_name}")
-                break
-        time.sleep(0.1)
-    
-    print(f"Fim funcao set_mode, modo atual: {current_mode['value']}")
-
-def arm():
+def switch_camera_angle():
+    # Colocar o mount/gimbal em modo controlado por MAVLink
     drone.mav.command_long_send(
-        drone.target_system, drone.target_component,
-        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-        0, 1, 0, 0, 0, 0, 0, 0
-    )
-    ack = wait_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM)
-    print(f"Arm ACK: {ack}")
-    time.sleep(1)
-
-def disarm():
-    drone.mav.command_long_send(
-        drone.target_system, drone.target_component,
-        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-        0, 0, 0, 0, 0, 0, 0, 0
-    )
-    ack = wait_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM)
-    print(f"Disarm ACK: {ack}")
-
-def takeoff():
-    print("A armar...")
-    arm()
-    print("A mudar para GUIDED...")
-    set_mode('GUIDED')
-    print(f"A descolar para {TAKEOFF_ALT}m...")
-    drone.mav.command_long_send(
-        drone.target_system, drone.target_component,
-        mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-        0, 0, 0, 0, 0, 0, 0, TAKEOFF_ALT
-    )
-    ack = wait_ack(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF)
-    print(f"Takeoff ACK: {ack}")
-
-def land():
-    print("A pousar...")
-    set_mode('LAND')
-
-def monitor_mode_changes():
-    global routeType
-    print("A monitorizar mudanças de modo...")
-    """Só LÊ o estado partilhado current_mode, nunca chama recv_match diretamente."""
-    last_mode = None
-    while True:
-        #perdemos 1 hora aqui
-        #print("Tipo de rota atual:", routeType)
-        #print("Modo Last:", last_mode)
-        #print("Modo atual:", current_mode["value"])
-        with mode_lock:
-            mode_now = current_mode["value"]
-        if mode_now != last_mode:
-            print(f"Modo mudou: {last_mode} -> {mode_now}")
-            if mode_now == 'GUIDED' and last_mode != 'GUIDED' and routeType == 'linear':
-                print(">>> Modo GUIDED detetado, a correr o código Python...")
-                print("A executar rota linear...")
-                threading.Thread(target=viagem()).start()
-            elif routeType == 'spline':
-                print(">>> Modo GUIDED detetado, a correr o código Python...")
-                print("A executar rota polinomial...")
-                threading.Thread(target=spline_route_local, args=(waypoints,)).start()         
-        last_mode =current_mode["value"]
-
-        time.sleep(0.2)
-
-def get_key():
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        key = sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    return key
-
-def horizontal_distance(lat1, lon1, lat2, lon2):
-    R = 6371000  # raio da Terra em metros
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return 2 * R * math.asin(math.sqrt(a))
-
-def wait_reached(lat, lon, alt, radius=3.0, alt_tol=1.0, timeout=180, hold_time=2.0):
-    """
-    Espera até o drone estar a menos de 'radius' metros (horizontal)
-    e 'alt_tol' metros (vertical) do alvo, de forma estável durante 'hold_time' segundos.
-    """
-    start = time.time()
-    stable_since = None
-
-    while time.time() - start < timeout:
-        with position_lock:
-            lat_now = current_position["lat"]
-            lon_now = current_position["lon"]
-            alt_now = current_position["alt"]
-
-        if lat_now is not None:
-            dist = horizontal_distance(lat_now, lon_now, lat, lon)
-            dalt = abs(alt_now - alt)
-
-            if dist <= radius and dalt <= alt_tol:
-                if stable_since is None:
-                    stable_since = time.time()
-                elif time.time() - stable_since >= hold_time:
-                    print(f"Chegou ao waypoint (dist={dist:.1f}m, dalt={dalt:.1f}m)")
-                    return True
-            else:
-                stable_since = None
-
-        time.sleep(0.5)
-
-    print("Timeout: não chegou ao waypoint a tempo.")
-    return False
-
-def route(lat, lon, alt):
-    print("A mudar para GUIDED...")
-    set_mode('GUIDED')
-    print(f"A enviar posição alvo: lat={lat}, lon={lon}, alt={alt}m...")
-
-    # type_mask: usar apenas posição (ignora vel, accel, yaw, yaw_rate)
-    type_mask = 0b0000_1111_1111_1000  # = 0x0DF8 = 3576 (Use Position)
-
-    drone.mav.set_position_target_global_int_send(
-        0,                                              # time_boot_ms (pode ser 0)
         drone.target_system,
         drone.target_component,
-        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,  # alt relativa ao home
-        type_mask,
-        int(lat * 1e7),
-        int(lon * 1e7),
-        alt,        # metros acima do home (por causa do frame escolhido)
-        0, 0, 0,    # vx, vy, vz (ignorados pelo type_mask)
-        0, 0, 0,    # afx, afy, afz (ignorados)
-        0, 0        # yaw, yaw_rate (ignorados)
+        mavutil.mavlink.MAV_CMD_DO_MOUNT_CONFIGURE,
+        0,  # confirmation
+        mavutil.mavlink.MAV_MOUNT_MODE_MAVLINK_TARGETING,  # mode
+        1,  # stabilize roll
+        1,  # stabilize pitch
+        1,  # stabilize yaw
+        0, 0, 0
     )
 
-    wait_reached(lat, lon, alt)
-#### ==========================       slipne route
+    print("Gimbal configurado para MAVLink targeting")
+    time.sleep(1)
 
-def catmull_rom_point(p0, p1, p2, p3, t):
-    """Interpola um ponto entre p1 e p2 usando Catmull-Rom, t em [0,1]."""
-    t2 = t * t
-    t3 = t2 * t
-    def interp(c0, c1, c2, c3):
-        return 0.5 * (
-            2*c1 +
-            (-c0 + c2) * t +
-            (2*c0 - 5*c1 + 4*c2 - c3) * t2 +
-            (-c0 + 3*c1 - 3*c2 + c3) * t3
-        )
-    lat = interp(p0[0], p1[0], p2[0], p3[0])
-    lon = interp(p0[1], p1[1], p2[1], p3[1])
-    alt = interp(p0[2], p1[2], p2[2], p3[2])
-    return (lat, lon, alt)
+    # Apontar câmara 90 graus para baixo
+    drone.mav.command_long_send(
+        drone.target_system,
+        drone.target_component,
+        mavutil.mavlink.MAV_CMD_DO_MOUNT_CONTROL,
+        0,       # confirmation
+        -90.0,   # pitch: negativo aponta para baixo
+        0.0,     # roll
+        0.0,     # yaw
+        0, 0, 0,
+        mavutil.mavlink.MAV_MOUNT_MODE_MAVLINK_TARGETING
+    )
 
-def generate_spline_path(waypoints, points_per_segment=10):
-    """Gera pontos intermédios suavizados entre os waypoints."""
-    pts = [waypoints[0]] + waypoints + [waypoints[-1]]  # duplica extremos
-    path = []
-    for i in range(1, len(pts) - 2):
-        p0, p1, p2, p3 = pts[i-1], pts[i], pts[i+1], pts[i+2]
-        for step in range(points_per_segment):
-            t = step / points_per_segment
-            path.append(catmull_rom_point(p0, p1, p2, p3, t))
-    path.append(waypoints[-1])
-    return path
-
-def wait_close_enough(lat, lon, alt, radius=4.0, alt_tol=1.5, timeout=15):
-    """Avança assim que estiver dentro do raio, SEM exigir estabilização (hold_time=0)."""
-    start = time.time()
-    while time.time() - start < timeout:
-        with position_lock:
-            lat_now = current_position["lat"]
-            lon_now = current_position["lon"]
-            alt_now = current_position["alt"]
-        if lat_now is not None:
-            dist = horizontal_distance(lat_now, lon_now, lat, lon)
-            dalt = abs(alt_now - alt)
-            if dist <= radius and dalt <= alt_tol:
-                return True
-        time.sleep(0.1)
-    return False
-
-def spline_route_local(waypoints):
-    print("A mudar para GUIDED...")
-    set_mode('GUIDED')
-    path = generate_spline_path(waypoints, points_per_segment=8)
-    for lat, lon, alt in path:
-        drone.mav.set_position_target_global_int_send(
-            0, drone.target_system, drone.target_component,
-            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-            0b0000_1111_1111_1000,
-            int(lat * 1e7), int(lon * 1e7), alt,
-            0, 0, 0, 0, 0, 0, 0, 0
-        )
-        # raio maior => avança antes de desacelerar totalmente
-        wait_close_enough(lat, lon, alt, radius=6.0, alt_tol=1.5, timeout=15)
-    print("Rota spline (local) completa!")
-
+    print("Gimbal/câmara apontado para baixo")
 
 def viagem():
 
@@ -676,12 +341,16 @@ def keyboard_loop():
         print("  [l] Land")
         print("  [r] Route")
         print("  [h] RTL")
+        print("  [c] Swith camera angle")
         print("  [q] Sair")
 
         while True:
             key = get_key()
             if key == 't':
                 threading.Thread(target=takeoff).start()
+            elif key == 'c':
+                switch_camera_angle()
+
             elif key == 'l':
                 threading.Thread(target=land).start()
             elif key == 'q':
